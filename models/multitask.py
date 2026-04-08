@@ -94,8 +94,10 @@ class MultiTaskPerceptionModel(nn.Module):
         unet.eval()
 
         # ── Build the shared backbone + task-specific heads ───────────────
-        # Shared encoder: taken from the UNet (deepest task — richest weights)
-        self.encoder: VGG11Encoder = unet.encoder
+        # Shared encoder: taken from the classifier since both classifier_head
+        # and localization_head were trained starting from classifier weights.
+        # Using classifier encoder avoids feature mismatch for clf and loc heads.
+        self.encoder: VGG11Encoder = clf.encoder
 
         # Classification head from Task 1
         self.classifier_head: nn.Sequential = clf.classifier_head
