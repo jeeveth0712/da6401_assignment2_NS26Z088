@@ -202,21 +202,24 @@ def train_classifier(args: argparse.Namespace, device: torch.device) -> None:
     for epoch in range(1, args.epochs + 1):
         # ── Train ─────────────────────────────────────────────────────────
         model.train()
-        train_loss, n = 0.0, 0
+        train_loss, train_correct, n = 0.0, 0, 0
         for batch in train_dl:
             imgs   = batch["image"].to(device)
             labels = torch.tensor(batch["label"]).long().to(device) if not isinstance(batch["label"], torch.Tensor) else batch["label"].long().to(device)
             optimizer.zero_grad()
-            loss = criterion(model(imgs), labels)
+            logits = model(imgs)
+            loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
-            train_loss += loss.item() * imgs.size(0)
+            train_loss    += loss.item() * imgs.size(0)
+            train_correct += (logits.argmax(1) == labels).sum().item()
             n += imgs.size(0)
         train_loss /= n
+        train_acc   = train_correct / n
 
         # ── Validate ──────────────────────────────────────────────────────
         model.eval()
-        val_loss, all_preds, all_labels = 0.0, [], []
+        val_loss, val_correct, all_preds, all_labels = 0.0, 0, [], []
         with torch.no_grad():
             for batch in val_dl:
                 imgs   = batch["image"].to(device)
@@ -225,23 +228,28 @@ def train_classifier(args: argparse.Namespace, device: torch.device) -> None:
                     labels = torch.tensor(labels)
                 labels = labels.long().to(device)
                 logits = model(imgs)
-                val_loss += criterion(logits, labels).item() * imgs.size(0)
+                val_loss    += criterion(logits, labels).item() * imgs.size(0)
+                val_correct += (logits.argmax(1) == labels).sum().item()
                 all_preds.extend(logits.argmax(1).cpu().tolist())
                 all_labels.extend(labels.cpu().tolist())
         val_loss /= len(val_ds)
+        val_acc   = val_correct / len(val_ds)
         val_f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
 
         scheduler.step()
 
         # ── Log & checkpoint ──────────────────────────────────────────────
         wandb.log({
-            "epoch": epoch,
+            "epoch":          epoch,
             "train/cls_loss": train_loss,
+            "train/acc":      train_acc,
             "val/cls_loss":   val_loss,
+            "val/acc":        val_acc,
             "val/macro_f1":   val_f1,
         })
         print(f"[Classify] Epoch {epoch:3d}/{args.epochs}  "
-              f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_F1={val_f1:.4f}")
+              f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+              f"val_loss={val_loss:.4f}  val_acc={val_acc:.4f}  val_F1={val_f1:.4f}")
 
         if val_f1 > best_f1:
             best_f1 = val_f1
