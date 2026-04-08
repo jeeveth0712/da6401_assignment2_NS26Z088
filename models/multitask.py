@@ -69,9 +69,16 @@ class MultiTaskPerceptionModel(nn.Module):
 
         # ── Download checkpoints from Google Drive ────────────────────────
         import gdown
-        gdown.download(id="<classifier.pth drive id>", output=classifier_path, quiet=False)
-        gdown.download(id="<localizer.pth drive id>",  output=localizer_path,  quiet=False)
-        gdown.download(id="<unet.pth drive id>",       output=unet_path,       quiet=False)
+
+        gdown.download(
+            id="1Flr4x8YI1BH-KCYo0pV5G2L1h4ng6_K4", output=classifier_path, quiet=False
+        )
+        gdown.download(
+            id="1726sAG0UGdmUbR5v1Xc9WeNQ7EKkC9d8", output=localizer_path, quiet=False
+        )
+        gdown.download(
+            id="1HXr-w2ei7OiKXI5m9oH-gegb43eBdrMZ", output=unet_path, quiet=False
+        )
 
         # ── Instantiate and load each task model ──────────────────────────
         clf = VGG11Classifier(num_classes=num_breeds, in_channels=in_channels)
@@ -114,14 +121,14 @@ class MultiTaskPerceptionModel(nn.Module):
             * ``'segmentation'``:   ``[B, seg_classes, 224, 224]`` logits.
         """
         bottleneck, skips = self.encoder(x, return_features=True)
-        flat = bottleneck.view(bottleneck.size(0), -1)   # [B, 25088]
+        flat = bottleneck.view(bottleneck.size(0), -1)  # [B, 25088]
 
-        cls_out = self.classifier_head(flat)             # [B, num_breeds]
-        loc_out = self.localization_head(flat)           # [B, 4]
-        seg_out = self.decoder(bottleneck, skips)        # [B, seg_classes, H, W]
+        cls_out = self.classifier_head(flat)  # [B, num_breeds]
+        loc_out = self.localization_head(flat)  # [B, 4]
+        seg_out = self.decoder(bottleneck, skips)  # [B, seg_classes, H, W]
 
         return {
             "classification": cls_out,
-            "localization":   loc_out,
-            "segmentation":   seg_out,
+            "localization": loc_out,
+            "segmentation": seg_out,
         }

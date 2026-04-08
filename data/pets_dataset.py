@@ -45,17 +45,19 @@ def get_train_transforms() -> A.Compose:
             A.ShiftScaleRotate(
                 shift_limit=0.05,
                 scale_limit=0.1,
-                rotate_limit=10,
+                rotate_limit=15,
                 border_mode=0,  # constant padding (black)
                 p=0.5,
             ),
             A.ColorJitter(
-                brightness=0.2,
-                contrast=0.2,
-                saturation=0.2,
+                brightness=0.3,
+                contrast=0.3,
+                saturation=0.3,
                 hue=0.1,
                 p=0.5,
             ),
+            A.GaussianBlur(blur_limit=(3, 5), p=0.2),
+            A.CoarseDropout(max_holes=8, max_height=16, max_width=16, p=0.3),
             A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
             ToTensorV2(),  # HWC → CHW, numpy → torch
         ],

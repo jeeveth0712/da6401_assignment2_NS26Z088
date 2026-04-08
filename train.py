@@ -194,7 +194,7 @@ def train_classifier(args: argparse.Namespace, device: torch.device) -> None:
     model = VGG11Classifier(num_classes=37, dropout_p=args.dropout_p).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-3)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     best_f1 = 0.0
     ckpt_path = os.path.join(args.checkpoint_dir, "classifier.pth")
