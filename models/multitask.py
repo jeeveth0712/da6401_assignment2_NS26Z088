@@ -70,7 +70,7 @@ class MultiTaskPerceptionModel(nn.Module):
             id="1SHFBmGRvpbikYZp6DyvUjUNp_DVhRdbL", output=classifier_path, quiet=False
         )
         gdown.download(
-            id="12w4aZqv095cEnJg1zgBenZFxkAh74_-8", output=localizer_path, quiet=False
+            id="1UQxT9VIPxIopPnogHDXtg5YkJM2fguH6", output=localizer_path, quiet=False
         )
         gdown.download(
             id="1RLY5TM0M901MfjEpVsYrfMhm8TvpqjAg", output=unet_path, quiet=False
@@ -92,9 +92,9 @@ class MultiTaskPerceptionModel(nn.Module):
         # ── Build the shared backbone + task-specific heads ───────────────
         # Each task keeps its own fine-tuned encoder so there is no
         # feature-distribution mismatch at inference time.
-        self.encoder: VGG11Encoder = clf.encoder          # for classification
-        self.loc_encoder: VGG11Encoder = loc.encoder      # for localization
-        self.seg_encoder: VGG11Encoder = unet.encoder     # for segmentation
+        self.encoder: VGG11Encoder = clf.encoder  # for classification
+        self.loc_encoder: VGG11Encoder = loc.encoder  # for localization
+        self.seg_encoder: VGG11Encoder = unet.encoder  # for segmentation
 
         # Classification head from Task 1
         self.classifier_head: nn.Sequential = clf.classifier_head
@@ -121,13 +121,13 @@ class MultiTaskPerceptionModel(nn.Module):
         """
         # clf encoder → classification
         bottleneck, skips = self.encoder(x, return_features=True)
-        flat = bottleneck.view(bottleneck.size(0), -1)   # [B, 25088]
-        cls_out = self.classifier_head(flat)              # [B, num_breeds]
+        flat = bottleneck.view(bottleneck.size(0), -1)  # [B, 25088]
+        cls_out = self.classifier_head(flat)  # [B, num_breeds]
 
         # loc encoder → localization (its own fine-tuned encoder)
         loc_bottleneck, _ = self.loc_encoder(x, return_features=True)
         loc_flat = loc_bottleneck.view(loc_bottleneck.size(0), -1)  # [B, 25088]
-        loc_out = self.localization_head(loc_flat) * 224             # [B, 4] pixel space
+        loc_out = self.localization_head(loc_flat) * 224  # [B, 4] pixel space
 
         # unet encoder → segmentation (its own fine-tuned encoder)
         seg_bottleneck, seg_skips = self.seg_encoder(x, return_features=True)
