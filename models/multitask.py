@@ -74,10 +74,10 @@ class MultiTaskPerceptionModel(nn.Module):
             id="1SHFBmGRvpbikYZp6DyvUjUNp_DVhRdbL", output=classifier_path, quiet=False
         )
         gdown.download(
-            id="1R5Ur2tYG_0EUAOmnTr_Sp2Ux-Sk7j-jz", output=localizer_path, quiet=False
+            id="12w4aZqv095cEnJg1zgBenZFxkAh74_-8", output=localizer_path, quiet=False
         )
         gdown.download(
-            id="1XqnrFSrjftYyWHcuQnuIYaFqPv132npw", output=unet_path, quiet=False
+            id="1RLY5TM0M901MfjEpVsYrfMhm8TvpqjAg", output=unet_path, quiet=False
         )
 
         # ── Instantiate and load each task model ──────────────────────────
