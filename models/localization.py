@@ -51,6 +51,7 @@ class VGG11Localizer(nn.Module):
             nn.Linear(4096, 1024),
             nn.ReLU(inplace=True),
             nn.Linear(1024, 4),     # (x_center, y_center, width, height)
+            nn.Sigmoid(),
         )
 
         self._init_weights()
@@ -77,4 +78,5 @@ class VGG11Localizer(nn.Module):
         """
         features = self.encoder(x)                         # [B, 512, 7, 7]
         flat     = features.view(features.size(0), -1)     # [B, 25088]
-        return self.localization_head(flat)                 # [B, 4]
+        out      = self.localization_head(flat)             # [B, 4] in [0, 1]
+        return out * 224                                    # scale to pixel space [0, 224]
