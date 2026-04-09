@@ -125,9 +125,9 @@ class MultiTaskPerceptionModel(nn.Module):
         bottleneck, skips = self.encoder(x, return_features=True)
         flat = bottleneck.view(bottleneck.size(0), -1)  # [B, 25088]
 
-        cls_out = self.classifier_head(flat)  # [B, num_breeds]
-        loc_out = self.localization_head(flat)  # [B, 4]
-        seg_out = self.decoder(bottleneck, skips)  # [B, seg_classes, H, W]
+        cls_out = self.classifier_head(flat)          # [B, num_breeds]
+        loc_out = self.localization_head(flat) * 224  # [B, 4] in pixel space [0, 224]
+        seg_out = self.decoder(bottleneck, skips)     # [B, seg_classes, H, W]
 
         return {
             "classification": cls_out,
