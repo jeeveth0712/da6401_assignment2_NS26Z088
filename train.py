@@ -194,7 +194,7 @@ def train_classifier(args: argparse.Namespace, device: torch.device) -> None:
                           num_workers=args.num_workers, pin_memory=True)
 
     model = VGG11Classifier(num_classes=37, dropout_p=args.dropout_p).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-3)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
@@ -445,6 +445,8 @@ def parse_args() -> argparse.Namespace:
                    help="Encoder freezing strategy for Tasks 2 & 3.")
     p.add_argument("--no_augment", action="store_true",
                    help="Disable training augmentation (use resize+normalize only).")
+    p.add_argument("--weight_decay", type=float, default=1e-3,
+                   help="Weight decay for Adam optimizer.")
     p.add_argument("--wandb_project", type=str, default="da6401-assignment2")
     p.add_argument("--wandb_run_name", type=str, default=None)
 
