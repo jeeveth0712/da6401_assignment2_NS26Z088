@@ -282,7 +282,6 @@ def train_localizer(args: argparse.Namespace, device: torch.device) -> None:
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer  = torch.optim.Adam(trainable, lr=args.lr, weight_decay=1e-4)
     scheduler  = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
-    mse_crit   = nn.SmoothL1Loss()        # more robust than MSE for bbox regression
     iou_crit   = IoULoss(reduction="mean")
 
     best_iou  = 0.0
@@ -295,10 +294,9 @@ def train_localizer(args: argparse.Namespace, device: torch.device) -> None:
         for batch in train_dl:
             imgs   = batch["image"].to(device)
             bboxes = batch["bbox"].to(device)               # [B, 4] in [0, 224]
-            bboxes_norm = bboxes / 224.0                    # [B, 4] in [0, 1]
             optimizer.zero_grad()
-            pred      = model(imgs) / 224.0                 # [B, 4] in [0, 1]
-            loss = mse_crit(pred, bboxes_norm) + iou_crit(pred * 224.0, bboxes)
+            pred = model(imgs)                              # [B, 4] in [0, 224]
+            loss = iou_crit(pred, bboxes)                  # IoU loss only
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * imgs.size(0)
@@ -312,11 +310,10 @@ def train_localizer(args: argparse.Namespace, device: torch.device) -> None:
             for batch in val_dl:
                 imgs   = batch["image"].to(device)
                 bboxes = batch["bbox"].to(device)
-                bboxes_norm = bboxes / 224.0
-                pred       = model(imgs) / 224.0
-                loss  = mse_crit(pred, bboxes_norm) + iou_crit(pred * 224.0, bboxes)
+                pred  = model(imgs)
+                loss  = iou_crit(pred, bboxes)
                 val_loss += loss.item() * imgs.size(0)
-                iou_sum  += compute_iou_batch(pred * 224.0, bboxes).sum().item()
+                iou_sum  += compute_iou_batch(pred, bboxes).sum().item()
                 nv += imgs.size(0)
         val_loss /= nv
         val_iou   = iou_sum / nv

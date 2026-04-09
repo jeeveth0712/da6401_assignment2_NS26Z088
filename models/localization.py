@@ -47,10 +47,13 @@ class VGG11Localizer(nn.Module):
             nn.Linear(512 * 7 * 7, 4096),
             nn.BatchNorm1d(4096),
             nn.ReLU(inplace=True),
-            CustomDropout(dropout_p),
             nn.Linear(4096, 1024),
+            nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
-            nn.Linear(1024, 4),     # (x_center, y_center, width, height)
+            nn.Linear(1024, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 4),      # (x_center, y_center, width, height)
             nn.Sigmoid(),
         )
 
