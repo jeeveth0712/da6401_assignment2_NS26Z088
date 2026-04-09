@@ -46,7 +46,6 @@ def get_train_transforms() -> A.Compose:
                 translate_percent=0.05,
                 scale=(0.9, 1.1),
                 rotate=(-15, 15),
-                mode=0,  # constant padding (black)
                 p=0.5,
             ),
             A.ColorJitter(
