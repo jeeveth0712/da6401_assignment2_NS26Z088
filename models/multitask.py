@@ -36,16 +36,12 @@ class MultiTaskPerceptionModel(nn.Module):
     .. code-block::
 
         Input image [B, 3, 224, 224]
-              │
-        ┌─────┴──────────────────────────┐
-        │   Shared VGG11Encoder          │
-        │   (weights from unet.pth)      │
-        └─────┬──────────┬──────────┬───┘
-              │          │          │
-        cls_head      loc_head   decoder
-        (clf.pth)   (loc.pth)  (unet.pth)
-              │          │          │
-        [B,37]       [B,4]   [B,3,H,W]
+              │           │           │
+        clf.encoder   loc.encoder  unet.encoder
+              │           │           │
+        cls_head      loc_head     decoder
+              │           │           │
+           [B,37]       [B,4]    [B,3,H,W]
 
     Args:
         num_breeds:       Number of breed classes (default 37).
@@ -94,11 +90,10 @@ class MultiTaskPerceptionModel(nn.Module):
         unet.eval()
 
         # ── Build the shared backbone + task-specific heads ───────────────
-        # clf.encoder and loc.encoder are identical (full_freeze from classifier)
-        # → use clf.encoder for classification + localization heads
-        # unet.encoder was fine-tuned for segmentation
-        # → use unet.encoder for segmentation decoder
-        self.encoder: VGG11Encoder = clf.encoder          # for clf + loc
+        # Each task keeps its own fine-tuned encoder so there is no
+        # feature-distribution mismatch at inference time.
+        self.encoder: VGG11Encoder = clf.encoder          # for classification
+        self.loc_encoder: VGG11Encoder = loc.encoder      # for localization
         self.seg_encoder: VGG11Encoder = unet.encoder     # for segmentation
 
         # Classification head from Task 1
@@ -124,13 +119,17 @@ class MultiTaskPerceptionModel(nn.Module):
               ``(x_center, y_center, width, height)`` in pixel space.
             * ``'segmentation'``:   ``[B, seg_classes, 224, 224]`` logits.
         """
-        # clf encoder → classification + localization
+        # clf encoder → classification
         bottleneck, skips = self.encoder(x, return_features=True)
-        flat = bottleneck.view(bottleneck.size(0), -1)  # [B, 25088]
-        cls_out = self.classifier_head(flat)             # [B, num_breeds]
-        loc_out = self.localization_head(flat) * 224     # [B, 4] pixel space
+        flat = bottleneck.view(bottleneck.size(0), -1)   # [B, 25088]
+        cls_out = self.classifier_head(flat)              # [B, num_breeds]
 
-        # unet encoder → segmentation (uses its own fine-tuned encoder)
+        # loc encoder → localization (its own fine-tuned encoder)
+        loc_bottleneck, _ = self.loc_encoder(x, return_features=True)
+        loc_flat = loc_bottleneck.view(loc_bottleneck.size(0), -1)  # [B, 25088]
+        loc_out = self.localization_head(loc_flat) * 224             # [B, 4] pixel space
+
+        # unet encoder → segmentation (its own fine-tuned encoder)
         seg_bottleneck, seg_skips = self.seg_encoder(x, return_features=True)
         seg_out = self.decoder(seg_bottleneck, seg_skips)  # [B, seg_classes, H, W]
 
