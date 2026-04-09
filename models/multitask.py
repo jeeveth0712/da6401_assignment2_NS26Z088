@@ -94,10 +94,12 @@ class MultiTaskPerceptionModel(nn.Module):
         unet.eval()
 
         # ── Build the shared backbone + task-specific heads ───────────────
-        # Shared encoder: taken from the classifier since both classifier_head
-        # and localization_head were trained starting from classifier weights.
-        # Using classifier encoder avoids feature mismatch for clf and loc heads.
-        self.encoder: VGG11Encoder = clf.encoder
+        # clf.encoder and loc.encoder are identical (full_freeze from classifier)
+        # → use clf.encoder for classification + localization heads
+        # unet.encoder was fine-tuned for segmentation
+        # → use unet.encoder for segmentation decoder
+        self.encoder: VGG11Encoder = clf.encoder          # for clf + loc
+        self.seg_encoder: VGG11Encoder = unet.encoder     # for segmentation
 
         # Classification head from Task 1
         self.classifier_head: nn.Sequential = clf.classifier_head
@@ -122,12 +124,15 @@ class MultiTaskPerceptionModel(nn.Module):
               ``(x_center, y_center, width, height)`` in pixel space.
             * ``'segmentation'``:   ``[B, seg_classes, 224, 224]`` logits.
         """
+        # clf encoder → classification + localization
         bottleneck, skips = self.encoder(x, return_features=True)
         flat = bottleneck.view(bottleneck.size(0), -1)  # [B, 25088]
+        cls_out = self.classifier_head(flat)             # [B, num_breeds]
+        loc_out = self.localization_head(flat) * 224     # [B, 4] pixel space
 
-        cls_out = self.classifier_head(flat)          # [B, num_breeds]
-        loc_out = self.localization_head(flat) * 224  # [B, 4] in pixel space [0, 224]
-        seg_out = self.decoder(bottleneck, skips)     # [B, seg_classes, H, W]
+        # unet encoder → segmentation (uses its own fine-tuned encoder)
+        seg_bottleneck, seg_skips = self.seg_encoder(x, return_features=True)
+        seg_out = self.decoder(seg_bottleneck, seg_skips)  # [B, seg_classes, H, W]
 
         return {
             "classification": cls_out,

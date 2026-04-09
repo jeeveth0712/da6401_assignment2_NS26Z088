@@ -282,7 +282,7 @@ def train_localizer(args: argparse.Namespace, device: torch.device) -> None:
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer  = torch.optim.Adam(trainable, lr=args.lr, weight_decay=1e-4)
     scheduler  = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
-    mse_crit   = nn.MSELoss()
+    mse_crit   = nn.SmoothL1Loss()        # more robust than MSE for bbox regression
     iou_crit   = IoULoss(reduction="mean")
 
     best_iou  = 0.0
