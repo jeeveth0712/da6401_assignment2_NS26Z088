@@ -1,10 +1,8 @@
-"""Localization model — VGG11 encoder + regression head.
+"""Localization model for Task 2 — predicting bounding box around the pet.
 
-Task 2: Predict a single bounding box per image in
-``(x_center, y_center, width, height)`` pixel coordinates.
+Output is (x_center, y_center, width, height) in pixel coordinates.
 
-Training loss (applied externally in train.py):
-    L = MSELoss(pred, target) + IoULoss(pred, target)
+We trained this with MSELoss + IoULoss combined.
 """
 
 import torch
@@ -15,21 +13,17 @@ from models.layers import CustomDropout
 
 
 class VGG11Localizer(nn.Module):
-    """Single-object bounding-box regressor built on VGG11.
+    """Bounding box regressor using VGG11 as backbone.
 
-    Architecture:
-        VGG11Encoder  →  flatten [B, 25088]
-            → Linear(25088, 4096) → BN → ReLU → Dropout
-            → Linear(4096, 1024)  → ReLU
-            → Linear(1024, 4)     [raw pixel output]
+    Takes an image, runs it through VGG11 encoder, flattens,
+    then passes through a regression head to predict 4 values (cx, cy, w, h).
 
-    The output is **not** passed through a sigmoid or any other bounded
-    activation; the MSE + IoU training loss drives the predictions into
-    the correct pixel-coordinate range naturally.
+    Sigmoid at the end keeps output in [0, 1], then we multiply by 224
+    to get pixel coordinates.
 
     Args:
-        in_channels: Number of input channels (default 3).
-        dropout_p:   Dropout probability in the regression head (default 0.5).
+        in_channels: Input channels, default 3.
+        dropout_p:   Dropout probability for regression head, default 0.5.
 
     Example::
         >>> model = VGG11Localizer()
@@ -53,8 +47,8 @@ class VGG11Localizer(nn.Module):
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 4),      # (x_center, y_center, width, height)
-            nn.Sigmoid(),
+            nn.Linear(512, 4),      # outputs (x_center, y_center, width, height)
+            nn.Sigmoid(),           # clamp to [0, 1] before scaling to pixels
         )
 
         self._init_weights()
@@ -69,17 +63,15 @@ class VGG11Localizer(nn.Module):
                 nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass.
+        """Run image through encoder and regression head.
 
         Args:
-            x: Input tensor ``[B, in_channels, 224, 224]``.
+            x: Input image [B, in_channels, 224, 224].
 
         Returns:
-            Bounding box ``[B, 4]`` as
-            ``(x_center, y_center, width, height)`` in pixel space
-            (not normalised).
+            Bounding box [B, 4] as (x_center, y_center, width, height) in pixels.
         """
         features = self.encoder(x)                         # [B, 512, 7, 7]
         flat     = features.view(features.size(0), -1)     # [B, 25088]
-        out      = self.localization_head(flat)             # [B, 4] in [0, 1]
+        out      = self.localization_head(flat)             # [B, 4] values in [0, 1]
         return out * 224                                    # scale to pixel space [0, 224]

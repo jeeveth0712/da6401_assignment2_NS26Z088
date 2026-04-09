@@ -1,12 +1,9 @@
-"""Unified multi-task perception model.
+"""Unified multi-task model for Task 4.
 
-Task 4: Single forward pass → classification logits + bounding box + segmentation mask.
+Single forward pass gives all three outputs — classification, localization, segmentation.
 
-Backbone sharing strategy:
-    The UNet checkpoint is used as the shared backbone because Task 3 (segmentation)
-    requires the richest feature representations and is the most demanding task.
-    The classifier head is lifted from classifier.pth and the localization head
-    from localizer.pth, keeping all task-specific weights intact.
+Each task keeps its own separately trained encoder so we don't mess up the
+feature distributions. The heads are directly lifted from the individual checkpoints.
 """
 
 import torch
@@ -19,7 +16,7 @@ from models.segmentation import VGG11UNet
 
 
 def _load_state_dict(path: str, map_location="cpu") -> dict:
-    """Load a checkpoint that may be either a plain state_dict or a wrapped dict."""
+    """Load checkpoint file — handles both plain state_dict and wrapped dicts."""
     ckpt = torch.load(path, map_location=map_location)
     if isinstance(ckpt, dict) and "state_dict" in ckpt:
         return ckpt["state_dict"]
@@ -27,29 +24,29 @@ def _load_state_dict(path: str, map_location="cpu") -> dict:
 
 
 class MultiTaskPerceptionModel(nn.Module):
-    """Shared-backbone multi-task model.
+    """Multi-task model that runs classification, localization, and segmentation together.
 
-    On ``__init__``, the three task-specific checkpoints are downloaded from
-    Google Drive (via ``gdown``) and the weights are loaded into a unified
-    architecture:
+    On init, we download the three checkpoints from Google Drive and load
+    the weights. Each task gets its own encoder (no sharing) to avoid
+    feature distribution mismatch.
 
-    .. code-block::
+    The architecture looks like:
 
         Input image [B, 3, 224, 224]
-              │           │           │
+              |           |           |
         clf.encoder   loc.encoder  unet.encoder
-              │           │           │
+              |           |           |
         cls_head      loc_head     decoder
-              │           │           │
+              |           |           |
            [B,37]       [B,4]    [B,3,H,W]
 
     Args:
-        num_breeds:       Number of breed classes (default 37).
-        seg_classes:      Number of segmentation classes (default 3).
-        in_channels:      Number of input channels (default 3).
-        classifier_path:  Relative path to ``classifier.pth``.
-        localizer_path:   Relative path to ``localizer.pth``.
-        unet_path:        Relative path to ``unet.pth``.
+        num_breeds:       Number of breed classes, default 37.
+        seg_classes:      Number of segmentation classes, default 3.
+        in_channels:      Input channels, default 3.
+        classifier_path:  Path to save/load classifier.pth.
+        localizer_path:   Path to save/load localizer.pth.
+        unet_path:        Path to save/load unet.pth.
     """
 
     def __init__(
@@ -63,7 +60,7 @@ class MultiTaskPerceptionModel(nn.Module):
     ) -> None:
         super().__init__()
 
-        # ── Download checkpoints from Google Drive ────────────────────────
+        # download checkpoints from Google Drive
         import gdown
 
         gdown.download(
@@ -76,7 +73,7 @@ class MultiTaskPerceptionModel(nn.Module):
             id="1RLY5TM0M901MfjEpVsYrfMhm8TvpqjAg", output=unet_path, quiet=False
         )
 
-        # ── Instantiate and load each task model ──────────────────────────
+        # load each task model from its checkpoint
         clf = VGG11Classifier(num_classes=num_breeds, in_channels=in_channels)
         clf.load_state_dict(_load_state_dict(classifier_path))
         clf.eval()
@@ -89,49 +86,41 @@ class MultiTaskPerceptionModel(nn.Module):
         unet.load_state_dict(_load_state_dict(unet_path))
         unet.eval()
 
-        # ── Build the shared backbone + task-specific heads ───────────────
-        # Each task keeps its own fine-tuned encoder so there is no
-        # feature-distribution mismatch at inference time.
-        self.encoder: VGG11Encoder = clf.encoder  # for classification
-        self.loc_encoder: VGG11Encoder = loc.encoder  # for localization
-        self.seg_encoder: VGG11Encoder = unet.encoder  # for segmentation
+        # each task has its own encoder with its own fine-tuned weights
+        self.encoder: VGG11Encoder = clf.encoder       # classification encoder
+        self.loc_encoder: VGG11Encoder = loc.encoder   # localization encoder
+        self.seg_encoder: VGG11Encoder = unet.encoder  # segmentation encoder
 
-        # Classification head from Task 1
+        # pull the heads from each task model
         self.classifier_head: nn.Sequential = clf.classifier_head
-
-        # Localization head from Task 2
         self.localization_head: nn.Sequential = loc.localization_head
-
-        # Segmentation decoder from Task 3
         self.decoder = unet.decoder
 
     def forward(self, x: torch.Tensor) -> dict:
-        """Single forward pass producing all three task outputs.
+        """One forward pass — returns all three task outputs.
 
         Args:
-            x: Input tensor ``[B, in_channels, 224, 224]``.
+            x: Input image [B, in_channels, 224, 224].
 
         Returns:
-            A ``dict`` with keys:
-
-            * ``'classification'``: ``[B, num_breeds]`` logits.
-            * ``'localization'``:   ``[B, 4]`` bounding box
-              ``(x_center, y_center, width, height)`` in pixel space.
-            * ``'segmentation'``:   ``[B, seg_classes, 224, 224]`` logits.
+            Dict with:
+                'classification': [B, num_breeds] logits
+                'localization':   [B, 4] bbox (cx, cy, w, h) in pixel space
+                'segmentation':   [B, seg_classes, 224, 224] logits
         """
-        # clf encoder → classification
+        # classification — use clf encoder
         bottleneck, skips = self.encoder(x, return_features=True)
         flat = bottleneck.view(bottleneck.size(0), -1)  # [B, 25088]
-        cls_out = self.classifier_head(flat)  # [B, num_breeds]
+        cls_out = self.classifier_head(flat)             # [B, num_breeds]
 
-        # loc encoder → localization (its own fine-tuned encoder)
+        # localization — use its own encoder
         loc_bottleneck, _ = self.loc_encoder(x, return_features=True)
         loc_flat = loc_bottleneck.view(loc_bottleneck.size(0), -1)  # [B, 25088]
-        loc_out = self.localization_head(loc_flat) * 224  # [B, 4] pixel space
+        loc_out = self.localization_head(loc_flat) * 224            # [B, 4] in pixels
 
-        # unet encoder → segmentation (its own fine-tuned encoder)
+        # segmentation — use unet encoder + decoder
         seg_bottleneck, seg_skips = self.seg_encoder(x, return_features=True)
-        seg_out = self.decoder(seg_bottleneck, seg_skips)  # [B, seg_classes, H, W]
+        seg_out = self.decoder(seg_bottleneck, seg_skips)           # [B, seg_classes, H, W]
 
         return {
             "classification": cls_out,

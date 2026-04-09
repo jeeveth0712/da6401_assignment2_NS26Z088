@@ -1,14 +1,14 @@
-"""Inference and evaluation for the unified multi-task pipeline.
+"""Inference and evaluation for the multi-task pipeline.
 
-Loads MultiTaskPerceptionModel and runs it on the test split of the
-Oxford-IIIT Pet dataset (or arbitrary images), reporting:
+Loads MultiTaskPerceptionModel and runs it on the test split (or a single image),
+reporting:
     - Classification Macro F1
-    - Mean IoU  (detection)
+    - Mean IoU  (localization)
     - Mean Dice (segmentation)
 
 Usage:
     python inference.py --data_root /path/to/pets
-    python inference.py --image /path/to/cat.jpg   # single-image mode
+    python inference.py --image /path/to/cat.jpg   # single image mode
 """
 
 import argparse
@@ -32,6 +32,7 @@ from models.multitask import MultiTaskPerceptionModel
 # ── Metric helpers ────────────────────────────────────────────────────────────
 
 def _iou_batch(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Compute per-sample IoU between predicted and target boxes."""
     def xyxy(b):
         return b[:, 0] - b[:, 2] / 2, b[:, 1] - b[:, 3] / 2, \
                b[:, 0] + b[:, 2] / 2, b[:, 1] + b[:, 3] / 2
@@ -47,6 +48,7 @@ def _iou_batch(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> t
 
 def _dice_batch(pred_logits: torch.Tensor, target: torch.Tensor,
                 num_classes: int = 3, smooth: float = 1.0) -> float:
+    """Compute mean Dice score across all classes for the batch."""
     pred = pred_logits.argmax(1)
     score = 0.0
     for c in range(num_classes):
@@ -65,7 +67,7 @@ def evaluate(
     num_workers: int = 4,
     device: torch.device = torch.device("cpu"),
 ) -> dict:
-    """Run the unified pipeline on a dataset split and return metric dict."""
+    """Run the model on a full dataset split and return all three metrics."""
 
     ds = OxfordIIITPetDataset(data_root, split=split)
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False,
@@ -87,15 +89,15 @@ def evaluate(
 
             out = model(imgs)
 
-            # Classification
+            # classification — collect preds and labels for F1 at the end
             preds = out["classification"].argmax(1).cpu()
             all_cls_preds.extend(preds.tolist())
             all_cls_labels.extend(labels.tolist())
 
-            # Localization
+            # localization — sum IoU scores
             iou_sum += _iou_batch(out["localization"], bboxes).sum().item()
 
-            # Segmentation
+            # segmentation — accumulate dice weighted by batch size
             dice_sum += _dice_batch(out["segmentation"], masks) * imgs.size(0)
 
             n += imgs.size(0)
@@ -109,12 +111,14 @@ def evaluate(
 
 # ── Single-image inference ────────────────────────────────────────────────────
 
+# simple transform for single image — just resize and normalize
 _INFER_TRANSFORM = A.Compose([
     A.Resize(IMG_SIZE, IMG_SIZE),
     A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ToTensorV2(),
 ])
 
+# all 37 breed names in order matching the class indices
 BREED_NAMES = [
     "Abyssinian", "american_bulldog", "american_pit_bull_terrier",
     "basset_hound", "beagle", "Bengal", "Birman", "Bombay", "boxer",
@@ -133,22 +137,22 @@ def infer_single(
     image_path: str,
     device: torch.device,
 ) -> dict:
-    """Run the pipeline on a single image file.
+    """Run all three tasks on a single image and return the results.
 
     Args:
-        model:      Loaded MultiTaskPerceptionModel in eval mode.
-        image_path: Path to an RGB image file.
-        device:     Compute device.
+        model:      Loaded and eval-mode MultiTaskPerceptionModel.
+        image_path: Path to any RGB image file.
+        device:     Which device to run on.
 
     Returns:
-        dict with keys:
-            ``breed``      — predicted breed name (str).
-            ``confidence`` — softmax confidence for the top class (float).
-            ``bbox``       — [x_center, y_center, width, height] in pixels.
-            ``mask``       — [H, W] predicted class label map (numpy).
+        Dict with:
+            'breed'      — predicted breed name (str)
+            'confidence' — softmax confidence for top class (float)
+            'bbox'       — [x_center, y_center, width, height] in pixels
+            'mask'       — [H, W] numpy array of predicted class per pixel
     """
     img_np = np.array(Image.open(image_path).convert("RGB"))
-    t = _INFER_TRANSFORM(image=img_np)["image"]      # [3, 224, 224]
+    t = _INFER_TRANSFORM(image=img_np)["image"]   # [3, 224, 224]
     inp = t.unsqueeze(0).to(device)
 
     model.eval()
@@ -160,8 +164,8 @@ def infer_single(
     breed = BREED_NAMES[cls_idx] if cls_idx < len(BREED_NAMES) else str(cls_idx)
     confidence = probs[cls_idx].item()
 
-    bbox = out["localization"][0].cpu().tolist()                 # [4]
-    mask = out["segmentation"][0].argmax(0).cpu().numpy()       # [H, W]
+    bbox = out["localization"][0].cpu().tolist()              # [4]
+    mask = out["segmentation"][0].argmax(0).cpu().numpy()    # [H, W]
 
     return {
         "breed":      breed,
@@ -194,7 +198,7 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    print("Loading MultiTaskPerceptionModel …")
+    print("Loading MultiTaskPerceptionModel ...")
     model = MultiTaskPerceptionModel(
         classifier_path=args.classifier_path,
         localizer_path=args.localizer_path,
@@ -211,7 +215,7 @@ def main() -> None:
         print(f"  Mask shape : {result['mask'].shape}")
 
     if args.data_root:
-        print(f"\nEvaluating on split='{args.split}' …")
+        print(f"\nEvaluating on split='{args.split}' ...")
         metrics = evaluate(
             model, args.data_root,
             split=args.split,
@@ -219,7 +223,7 @@ def main() -> None:
             num_workers=args.num_workers,
             device=device,
         )
-        print(f"\n── Evaluation Results ({'%s split' % args.split}) ─────────")
+        print(f"\n── Evaluation Results ({args.split} split) ─────────")
         print(f"  Macro F1  (classification) : {metrics['macro_f1']:.4f}")
         print(f"  Mean IoU  (localization)   : {metrics['mean_iou']:.4f}")
         print(f"  Mean Dice (segmentation)   : {metrics['mean_dice']:.4f}")

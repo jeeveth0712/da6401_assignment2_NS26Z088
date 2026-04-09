@@ -1,9 +1,8 @@
-"""Custom Intersection-over-Union (IoU) loss for bounding box regression.
+"""IoU loss for bounding box regression.
 
-Boxes must be supplied in ``(x_center, y_center, width, height)`` format,
-in pixel coordinates.  The loss equals ``1 − IoU`` and is therefore in
-``[0, 1]``.  Gradients flow back through both predicted and target boxes
-(though targets are typically detached during training).
+Boxes should be in (x_center, y_center, width, height) format, in pixels.
+Loss = 1 - IoU, so it's between 0 and 1.
+0 means perfect overlap, 1 means no overlap at all.
 """
 
 import torch
@@ -11,30 +10,27 @@ import torch.nn as nn
 
 
 class IoULoss(nn.Module):
-    """IoU loss between predicted and target bounding boxes.
+    """Computes 1 - IoU between predicted and target bounding boxes.
 
-    .. math::
-        \\mathcal{L}_{IoU} = 1 - \\frac{\\text{Area}(\\text{Intersection})}{
-            \\text{Area}(\\text{Union}) + \\varepsilon}
+    Basically we compute how much the predicted box overlaps with the ground truth,
+    and then subtract from 1 so that lower overlap = higher loss.
 
-    The loss is in ``[0, 1]``:
-        * ``0``  — perfect overlap (prediction == target).
-        * ``1``  — zero overlap.
+    Loss formula:
+        L_IoU = 1 - (Intersection Area) / (Union Area + eps)
 
     Args:
-        eps:       Small constant added to the denominator for numerical
-                   stability (avoids division by zero).  Default: ``1e-6``.
-        reduction: How to reduce the per-sample losses:
-                   ``'mean'`` (default) | ``'sum'`` | ``'none'``.
+        eps:       Small value to avoid divide by zero. Default 1e-6.
+        reduction: How to combine losses across the batch.
+                   'mean' (default), 'sum', or 'none' (per sample).
 
     Raises:
-        ValueError: If ``reduction`` is not one of the three supported values.
+        ValueError: If reduction is not one of the three valid options.
 
     Example::
         >>> criterion = IoULoss(reduction='mean')
         >>> pred   = torch.tensor([[112., 112., 100., 80.]])
         >>> target = torch.tensor([[112., 112., 100., 80.]])
-        >>> criterion(pred, target)   # ≈ 0.0  (perfect overlap)
+        >>> criterion(pred, target)   # should be 0.0 since boxes are identical
         tensor(0.)
     """
 
@@ -52,18 +48,17 @@ class IoULoss(nn.Module):
         pred_boxes:   torch.Tensor,
         target_boxes: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute the IoU loss.
+        """Calculate IoU loss between predicted and ground truth boxes.
 
         Args:
-            pred_boxes:   ``[B, 4]`` predicted boxes
-                          ``(x_center, y_center, width, height)`` in pixels.
-            target_boxes: ``[B, 4]`` ground-truth boxes in the same format.
+            pred_boxes:   [B, 4] predicted boxes in (cx, cy, w, h) pixel format.
+            target_boxes: [B, 4] ground truth boxes in same format.
 
         Returns:
-            * Scalar tensor if ``reduction`` is ``'mean'`` or ``'sum'``.
-            * ``[B]`` tensor of per-sample losses if ``reduction='none'``.
+            Scalar if reduction is 'mean' or 'sum'.
+            [B] tensor if reduction is 'none'.
         """
-        # ── Convert (cx, cy, w, h) → (x1, y1, x2, y2) ─────────────────
+        # convert (cx, cy, w, h) to (x1, y1, x2, y2) for easier area calculation
         def to_xyxy(boxes: torch.Tensor):
             cx, cy, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
             return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
@@ -71,7 +66,7 @@ class IoULoss(nn.Module):
         p_x1, p_y1, p_x2, p_y2 = to_xyxy(pred_boxes)
         t_x1, t_y1, t_x2, t_y2 = to_xyxy(target_boxes)
 
-        # ── Intersection ────────────────────────────────────────────────
+        # find intersection rectangle
         inter_x1 = torch.max(p_x1, t_x1)
         inter_y1 = torch.max(p_y1, t_y1)
         inter_x2 = torch.min(p_x2, t_x2)
@@ -81,20 +76,20 @@ class IoULoss(nn.Module):
         inter_h    = (inter_y2 - inter_y1).clamp(min=0.0)
         inter_area = inter_w * inter_h
 
-        # ── Union ────────────────────────────────────────────────────────
+        # union = sum of both areas minus the overlap
         pred_area   = (p_x2 - p_x1).clamp(min=0.0) * (p_y2 - p_y1).clamp(min=0.0)
         target_area = (t_x2 - t_x1).clamp(min=0.0) * (t_y2 - t_y1).clamp(min=0.0)
         union_area  = pred_area + target_area - inter_area
 
-        # ── IoU and loss (both in [0, 1]) ────────────────────────────────
+        # iou and final loss
         iou  = inter_area / (union_area + self.eps)
-        loss = 1.0 - iou          # shape [B]
+        loss = 1.0 - iou          # [B]
 
         if self.reduction == "mean":
             return loss.mean()
         if self.reduction == "sum":
             return loss.sum()
-        return loss               # 'none' — return per-sample tensor [B]
+        return loss               # 'none' — return per-sample losses
 
     def extra_repr(self) -> str:
         return f"eps={self.eps}, reduction='{self.reduction}'"

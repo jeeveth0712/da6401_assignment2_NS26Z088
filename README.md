@@ -1,3 +1,10 @@
+# Submission Links
+
+- **GitHub Repo**: https://github.com/jeeveth0712/da6401_assignment2_NS26Z088.git
+- **WandB Report**: *(link to be added)*
+
+---
+
 # DA6401 Assignment-2 Skeleton Guide
 
 This repository is an instructional skeleton for building the complete visual perception pipeline on Oxford-IIIT Pet.

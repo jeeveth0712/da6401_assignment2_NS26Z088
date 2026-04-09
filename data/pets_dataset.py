@@ -1,10 +1,9 @@
 """Dataset loader for Oxford-IIIT Pet Dataset.
 
-Supports all three tasks simultaneously:
+Handles all three tasks at once:
     - Classification  : 37 breed classes (0-indexed)
     - Localization    : bounding box [x_center, y_center, width, height] in pixel space
-    - Segmentation    : trimap mask with values in {0, 1, 2}
-                        (0=foreground/pet, 1=background, 2=border/uncertain)
+    - Segmentation    : trimap mask — 0=foreground/pet, 1=background, 2=border/uncertain
 """
 
 import os
@@ -19,10 +18,10 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 
-# VGG11 paper uses 224×224 inputs
+# VGG11 takes 224x224 inputs
 IMG_SIZE = 224
 
-# ImageNet statistics — used since VGG11 was designed for ImageNet-normalised inputs
+# ImageNet mean and std — needed since our VGG11 was pretrained on ImageNet
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
@@ -33,10 +32,10 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
 def get_train_transforms() -> A.Compose:
-    """Training augmentation: geometric + colour jitter + normalisation.
+    """Training augmentations — flips, affine, colour jitter, blur, dropout, normalize.
 
-    All geometric ops (flip, shift, rotate) are applied identically to the
-    image, the bounding box, and the segmentation mask to keep them aligned.
+    All geometric transforms are applied to image, bbox, and mask together
+    so they stay aligned.
     """
     return A.Compose(
         [
@@ -58,19 +57,19 @@ def get_train_transforms() -> A.Compose:
             A.GaussianBlur(blur_limit=(3, 5), p=0.2),
             A.CoarseDropout(num_holes_range=(1, 8), hole_height_range=(8, 16), hole_width_range=(8, 16), p=0.3),
             A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ToTensorV2(),  # HWC → CHW, numpy → torch
+            ToTensorV2(),  # converts HWC numpy to CHW torch tensor
         ],
         bbox_params=A.BboxParams(
-            format="pascal_voc",  # expects [xmin, ymin, xmax, ymax]
+            format="pascal_voc",      # [xmin, ymin, xmax, ymax] format
             label_fields=["bbox_labels"],
-            clip=True,  # clip boxes to image boundary after transform
-            min_visibility=0.3,  # drop box if <30% visible after crop/rotate
+            clip=True,                # clip boxes to image boundary after transforms
+            min_visibility=0.3,       # drop box if less than 30% visible after crop/rotate
         ),
     )
 
 
 def get_val_transforms() -> A.Compose:
-    """Validation / test augmentation: deterministic resize + normalisation only."""
+    """Val/test transforms — just resize and normalize, no augmentation."""
     return A.Compose(
         [
             A.Resize(IMG_SIZE, IMG_SIZE),
@@ -91,27 +90,20 @@ def get_val_transforms() -> A.Compose:
 
 
 class OxfordIIITPetDataset(Dataset):
-    """Oxford-IIIT Pet multi-task dataset.
+    """Oxford-IIIT Pet dataset that returns image, label, bbox and mask for each sample.
 
     Args:
-        root:         Root directory containing ``images/`` and ``annotations/``
-                      sub-directories (standard Oxford-IIIT layout).
-        split:        One of ``'train'``, ``'val'``, or ``'test'``.
-        val_fraction: Fraction of the official *trainval* set reserved for
-                      validation.  Ignored when ``split='test'``.
-        seed:         RNG seed for the reproducible trainval → train/val split.
-        transform:    Custom ``albumentations.Compose`` pipeline.  When *None*
-                      a default pipeline is selected based on ``split``.
+        root:         Root folder containing images/ and annotations/ subdirectories.
+        split:        'train', 'val', or 'test'.
+        val_fraction: What fraction of trainval to use as validation. Ignored for test.
+        seed:         Random seed for train/val split reproducibility.
+        transform:    Custom albumentations pipeline. If None, we pick default based on split.
 
-    Returns (per ``__getitem__``):
-        A ``dict`` with keys:
-
-        * ``"image"``  - ``FloatTensor [3, 224, 224]``, ImageNet-normalised.
-        * ``"label"``  - ``int``, breed class index in ``[0, 36]``.
-        * ``"bbox"``   - ``FloatTensor [4]``, ``[x_center, y_center, w, h]``
-                         in **pixel coordinates** of the 224×224 image.
-        * ``"mask"``   - ``LongTensor [224, 224]``, trimap values in
-                         ``{0=foreground, 1=background, 2=border}``.
+    Each __getitem__ returns a dict:
+        "image"  — FloatTensor [3, 224, 224], ImageNet normalized
+        "label"  — int, breed class index in [0, 36]
+        "bbox"   — FloatTensor [4], (x_center, y_center, w, h) in pixel coords
+        "mask"   — LongTensor [224, 224], trimap values {0=foreground, 1=bg, 2=border}
     """
 
     def __init__(
@@ -135,10 +127,10 @@ class OxfordIIITPetDataset(Dataset):
         self.xml_dir = os.path.join(self.ann_dir, "xmls")
         self.mask_dir = os.path.join(self.ann_dir, "trimaps")
 
-        # Map image_name → 0-based class index
+        # get image name -> class index mapping
         label_map = self._parse_list_txt()
 
-        # Determine which image names belong to this split
+        # figure out which image names belong to this split
         if split == "test":
             names = self._read_split_file("test.txt")
         else:
@@ -152,7 +144,7 @@ class OxfordIIITPetDataset(Dataset):
             else:
                 names = [all_tv[i] for i in range(len(all_tv)) if i not in val_set]
 
-        # Build sample list, keeping only entries with valid annotation files
+        # build the sample list, skip any entries with missing files
         self.samples: List[Dict] = []
         for name in names:
             img_path = self._find_image(name)
@@ -176,7 +168,7 @@ class OxfordIIITPetDataset(Dataset):
                 }
             )
 
-        # Select / store augmentation pipeline
+        # set the transform pipeline
         if transform is not None:
             self.transform = transform
         elif split == "train":
@@ -189,7 +181,7 @@ class OxfordIIITPetDataset(Dataset):
     # ------------------------------------------------------------------
 
     def _find_image(self, name: str) -> Optional[str]:
-        """Return the image path for *name*, trying common extensions."""
+        """Try common image extensions and return the path if found."""
         for ext in (".jpg", ".jpeg", ".png"):
             p = os.path.join(self.img_dir, name + ext)
             if os.path.exists(p):
@@ -197,7 +189,7 @@ class OxfordIIITPetDataset(Dataset):
         return None
 
     def _parse_list_txt(self) -> Dict[str, int]:
-        """Parse ``annotations/list.txt`` → ``{image_name: class_index}`` (0-based)."""
+        """Read annotations/list.txt and return {image_name: class_index} (0-based)."""
         path = os.path.join(self.ann_dir, "list.txt")
         mapping: Dict[str, int] = {}
         with open(path, "r") as fh:
@@ -207,12 +199,12 @@ class OxfordIIITPetDataset(Dataset):
                     continue
                 parts = line.split()
                 name = parts[0]
-                class_id = int(parts[1]) - 1  # list.txt is 1-indexed
+                class_id = int(parts[1]) - 1  # list.txt uses 1-based indexing
                 mapping[name] = class_id
         return mapping
 
     def _read_split_file(self, filename: str) -> List[str]:
-        """Return image names (no extension) listed in an annotations split file."""
+        """Read a split file and return list of image names (no extension)."""
         path = os.path.join(self.ann_dir, filename)
         names: List[str] = []
         with open(path, "r") as fh:
@@ -224,7 +216,7 @@ class OxfordIIITPetDataset(Dataset):
         return names
 
     def _parse_bbox_xml(self, xml_path: str) -> Tuple[float, float, float, float]:
-        """Parse a Pascal-VOC XML file and return (xmin, ymin, xmax, ymax)."""
+        """Parse Pascal VOC XML and return (xmin, ymin, xmax, ymax) of first object."""
         tree = ET.parse(xml_path)
         root = tree.getroot()
         obj = root.find("object")
@@ -245,45 +237,43 @@ class OxfordIIITPetDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict:
         sample = self.samples[idx]
 
-        # ── Image ──────────────────────────────────────────────────────
+        # load image as numpy array
         image = np.array(Image.open(sample["img_path"]).convert("RGB"))
         orig_h, orig_w = image.shape[:2]
 
-        # ── Trimap mask ────────────────────────────────────────────────
-        # Oxford trimap pixel values: 1=foreground, 2=background, 3=border
-        # Remap to 0-based: 0=foreground, 1=background, 2=border
+        # load trimap mask
+        # Oxford trimaps use pixel values 1=foreground, 2=background, 3=border
+        # we remap to 0-based: 0=foreground, 1=background, 2=border
         mask = np.array(Image.open(sample["mask_path"]).convert("L"), dtype=np.uint8)
         mask = np.clip(mask.astype(np.int32) - 1, 0, 2).astype(np.uint8)
 
-        # ── Bounding box (Pascal VOC format) ──────────────────────────
+        # load and clip bounding box
         xmin, ymin, xmax, ymax = self._parse_bbox_xml(sample["xml_path"])
-        # Clip to valid image extent before transforming
         xmin = float(np.clip(xmin, 0, orig_w - 1))
         ymin = float(np.clip(ymin, 0, orig_h - 1))
         xmax = float(np.clip(xmax, xmin + 1, orig_w))
         ymax = float(np.clip(ymax, ymin + 1, orig_h))
 
-        # ── Apply albumentations pipeline ─────────────────────────────
+        # apply augmentation pipeline
         transformed = self.transform(
             image=image,
             mask=mask,
             bboxes=[[xmin, ymin, xmax, ymax]],
-            bbox_labels=[0],  # dummy category; we only have one box
+            bbox_labels=[0],  # dummy label, we only have one box per image
         )
 
-        image_t = transformed["image"]  # FloatTensor [3, 224, 224]
-        mask_t = transformed["mask"].long()  # LongTensor  [224, 224]
+        image_t = transformed["image"]        # FloatTensor [3, 224, 224]
+        mask_t = transformed["mask"].long()   # LongTensor  [224, 224]
 
-        # Recover transformed bbox (albumentations may drop it if invisible)
+        # get transformed bbox — albumentations might drop it if it goes out of frame
         bboxes_out = transformed["bboxes"]
         if len(bboxes_out) > 0:
             tx1, ty1, tx2, ty2 = bboxes_out[0]
         else:
-            # Fallback: full image extent
+            # fallback to full image if bbox got dropped
             tx1, ty1, tx2, ty2 = 0.0, 0.0, float(IMG_SIZE), float(IMG_SIZE)
 
-        # Convert [xmin, ymin, xmax, ymax] → [x_center, y_center, width, height]
-        # All values are in pixel coordinates of the resized 224×224 image
+        # convert [xmin, ymin, xmax, ymax] -> [x_center, y_center, width, height]
         x_center = (tx1 + tx2) / 2.0
         y_center = (ty1 + ty2) / 2.0
         width = tx2 - tx1
@@ -291,8 +281,8 @@ class OxfordIIITPetDataset(Dataset):
         bbox_t = torch.tensor([x_center, y_center, width, height], dtype=torch.float32)
 
         return {
-            "image": image_t,  # FloatTensor [3, 224, 224]
-            "label": sample["label"],  # int in [0, 36]
-            "bbox": bbox_t,  # FloatTensor [4]
-            "mask": mask_t,  # LongTensor  [224, 224]
+            "image": image_t,        # FloatTensor [3, 224, 224]
+            "label": sample["label"],# int in [0, 36]
+            "bbox": bbox_t,          # FloatTensor [4]
+            "mask": mask_t,          # LongTensor  [224, 224]
         }
