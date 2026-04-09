@@ -293,11 +293,12 @@ def train_localizer(args: argparse.Namespace, device: torch.device) -> None:
         model.train()
         train_loss, n = 0.0, 0
         for batch in train_dl:
-            imgs  = batch["image"].to(device)
-            bboxes = batch["bbox"].to(device)               # [B, 4]
+            imgs   = batch["image"].to(device)
+            bboxes = batch["bbox"].to(device)               # [B, 4] in [0, 224]
+            bboxes_norm = bboxes / 224.0                    # [B, 4] in [0, 1]
             optimizer.zero_grad()
-            pred = model(imgs)                               # [B, 4]
-            loss = mse_crit(pred, bboxes) + iou_crit(pred, bboxes)
+            pred      = model(imgs) / 224.0                 # [B, 4] in [0, 1]
+            loss = mse_crit(pred, bboxes_norm) + iou_crit(pred * 224.0, bboxes)
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * imgs.size(0)
@@ -309,12 +310,13 @@ def train_localizer(args: argparse.Namespace, device: torch.device) -> None:
         val_loss, iou_sum, nv = 0.0, 0.0, 0
         with torch.no_grad():
             for batch in val_dl:
-                imgs  = batch["image"].to(device)
+                imgs   = batch["image"].to(device)
                 bboxes = batch["bbox"].to(device)
-                pred  = model(imgs)
-                loss  = mse_crit(pred, bboxes) + iou_crit(pred, bboxes)
+                bboxes_norm = bboxes / 224.0
+                pred       = model(imgs) / 224.0
+                loss  = mse_crit(pred, bboxes_norm) + iou_crit(pred * 224.0, bboxes)
                 val_loss += loss.item() * imgs.size(0)
-                iou_sum  += compute_iou_batch(pred, bboxes).sum().item()
+                iou_sum  += compute_iou_batch(pred * 224.0, bboxes).sum().item()
                 nv += imgs.size(0)
         val_loss /= nv
         val_iou   = iou_sum / nv
