@@ -32,7 +32,7 @@ from torch.utils.data import DataLoader
 import wandb
 from sklearn.metrics import f1_score
 
-from data.pets_dataset import OxfordIIITPetDataset
+from data.pets_dataset import OxfordIIITPetDataset, get_val_transforms
 from losses.iou_loss import IoULoss
 from models.classification import VGG11Classifier
 from models.localization import VGG11Localizer
@@ -184,7 +184,9 @@ def load_encoder_weights(model: nn.Module, checkpoint_path: str) -> None:
 def train_classifier(args: argparse.Namespace, device: torch.device) -> None:
     """Train VGG11 for 37-class breed classification (Task 1)."""
 
-    train_ds = OxfordIIITPetDataset(args.data_root, split="train", seed=args.seed)
+    train_transform = get_val_transforms() if args.no_augment else None
+    train_ds = OxfordIIITPetDataset(args.data_root, split="train", seed=args.seed,
+                                    transform=train_transform)
     val_ds   = OxfordIIITPetDataset(args.data_root, split="val",   seed=args.seed)
     train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                           num_workers=args.num_workers, pin_memory=True)
@@ -441,6 +443,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--freeze_mode", choices=["none", "partial", "full_freeze"],
                    default="none",
                    help="Encoder freezing strategy for Tasks 2 & 3.")
+    p.add_argument("--no_augment", action="store_true",
+                   help="Disable training augmentation (use resize+normalize only).")
     p.add_argument("--wandb_project", type=str, default="da6401-assignment2")
     p.add_argument("--wandb_run_name", type=str, default=None)
 
