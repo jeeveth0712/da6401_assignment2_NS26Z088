@@ -1,7 +1,7 @@
 # Submission Links
 
 - **GitHub Repo**: https://github.com/jeeveth0712/da6401_assignment2_NS26Z088.git
-- **WandB Report**: *(link to be added)*
+- **WandB Report**: https://api.wandb.ai/links/jeevethkoka-indian-institute-of-technology-madras/6ab7afrn
 
 ---
 
